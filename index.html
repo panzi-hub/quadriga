@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Counter App</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background-color: #F5F5F7;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .card {
+      background-color: #FFFFFF;
+      border-radius: 20px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+      padding: 32px;
+      width: 320px;
+      text-align: center;
+    }
+
+    .step-selector {
+      display: flex;
+      gap: 4px;
+      background-color: #F5F5F7;
+      border-radius: 12px;
+      padding: 4px;
+      margin-bottom: 24px;
+    }
+
+    .step-btn {
+      flex: 1;
+      padding: 10px 0;
+      border: none;
+      background: transparent;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #86868B;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .step-btn.active {
+      background-color: #FFFFFF;
+      color: #1D1D1F;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .step-btn:hover:not(.active) {
+      color: #1D1D1F;
+    }
+
+    .counter-display {
+      font-size: 72px;
+      font-weight: bold;
+      color: #1D1D1F;
+      font-variant-numeric: tabular-nums;
+      cursor: pointer;
+      user-select: none;
+      margin-bottom: 8px;
+      transition: transform 0.15s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .counter-display.bounce {
+      animation: bounce 0.3s ease;
+    }
+
+    .counter-display.reset-animation {
+      animation: resetPulse 0.4s ease;
+    }
+
+    @keyframes bounce {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+
+    @keyframes resetPulse {
+      0% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.15); opacity: 0.8; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .reset-hint {
+      font-size: 12px;
+      color: #86868B;
+      margin-bottom: 24px;
+      opacity: 0.7;
+    }
+
+    .buttons {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    .btn {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      border: none;
+      font-size: 32px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: transform 0.1s ease, box-shadow 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .btn:active {
+      transform: scale(0.95);
+    }
+
+    .btn.increment {
+      background-color: #34C759;
+      color: #FFFFFF;
+      box-shadow: 0 4px 16px rgba(52, 199, 89, 0.4);
+    }
+
+    .btn.increment:hover {
+      box-shadow: 0 6px 20px rgba(52, 199, 89, 0.5);
+    }
+
+    .btn.decrement {
+      background-color: #FF3B30;
+      color: #FFFFFF;
+      box-shadow: 0 4px 16px rgba(255, 59, 48, 0.4);
+    }
+
+    .btn.decrement:hover {
+      box-shadow: 0 6px 20px rgba(255, 59, 48, 0.5);
+    }
+
+    .btn.pulse {
+      animation: pulse 0.2s ease;
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 4px 16px rgba(52, 199, 89, 0.4); }
+      50% { box-shadow: 0 4px 24px rgba(52, 199, 89, 0.7); }
+      100% { box-shadow: 0 4px 16px rgba(52, 199, 89, 0.4); }
+    }
+
+    .btn.decrement.pulse {
+      animation: pulseDecrement 0.2s ease;
+    }
+
+    @keyframes pulseDecrement {
+      0% { box-shadow: 0 4px 16px rgba(255, 59, 48, 0.4); }
+      50% { box-shadow: 0 4px 24px rgba(255, 59, 48, 0.7); }
+      100% { box-shadow: 0 4px 16px rgba(255, 59, 48, 0.4); }
+    }
+
+    .limits-section {
+      border-top: 1px solid #E5E5EA;
+      padding-top: 16px;
+    }
+
+    .limits-label {
+      font-size: 12px;
+      color: #86868B;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+
+    .limits-inputs {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+    }
+
+    .limit-field {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .limit-field label {
+      font-size: 10px;
+      color: #86868B;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .limit-field input {
+      width: 70px;
+      padding: 8px 12px;
+      border: 1px solid #E5E5EA;
+      border-radius: 8px;
+      font-size: 14px;
+      text-align: center;
+      color: #1D1D1F;
+      font-variant-numeric: tabular-nums;
+      transition: border-color 0.2s ease;
+    }
+
+    .limit-field input:focus {
+      outline: none;
+      border-color: #34C759;
+    }
+
+    .limit-field input::placeholder {
+      color: #C7C7CC;
+    }
+
+    .keyboard-hints {
+      margin-top: 16px;
+      font-size: 11px;
+      color: #86868B;
+      opacity: 0.6;
+    }
+
+    .keyboard-hints kbd {
+      background-color: #E5E5EA;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="step-selector">
+      <button class="step-btn" data-step="1">1</button>
+      <button class="step-btn active" data-step="5">5</button>
+      <button class="step-btn" data-step="10">10</button>
+    </div>
+
+    <div class="counter-display" id="counterDisplay">0</div>
+    <div class="reset-hint">Long-press to reset</div>
+
+    <div class="buttons">
+      <button class="btn decrement" id="decrementBtn">−</button>
+      <button class="btn increment" id="incrementBtn">+</button>
+    </div>
+
+    <div class="limits-section">
+      <div class="limits-label">Min / Max Limits</div>
+      <div class="limits-inputs">
+        <div class="limit-field">
+          <label>Min</label>
+          <input type="number" id="minLimit" placeholder="∞">
+        </div>
+        <div class="limit-field">
+          <label>Max</label>
+          <input type="number" id="maxLimit" placeholder="∞">
+        </div>
+      </div>
+    </div>
+
+    <div class="keyboard-hints">
+      <kbd>↑</kbd> <kbd>↓</kbd> increment/decrement &nbsp;·&nbsp; <kbd>R</kbd> reset
+    </div>
+  </div>
+
+  <script>
+    const counterDisplay = document.getElementById('counterDisplay');
+    const incrementBtn = document.getElementById('incrementBtn');
+    const decrementBtn = document.getElementById('decrementBtn');
+    const minLimitInput = document.getElementById('minLimit');
+    const maxLimitInput = document.getElementById('maxLimit');
+    const stepBtns = document.querySelectorAll('.step-btn');
+
+    let state = {
+      count: 0,
+      step: 5,
+      minLimit: null,
+      maxLimit: null
+    };
+
+    let longPressTimer = null;
+    let isLongPress = false;
+
+    function loadState() {
+      const saved = localStorage.getItem('counterAppState');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          state = { ...state, ...parsed };
+        } catch (e) {
+          console.warn('Failed to parse saved state');
+        }
+      }
+      updateDisplay();
+      updateStepButtons();
+      updateLimitInputs();
+    }
+
+    function saveState() {
+      localStorage.setItem('counterAppState', JSON.stringify(state));
+    }
+
+    function updateDisplay() {
+      counterDisplay.textContent = state.count;
+    }
+
+    function updateStepButtons() {
+      stepBtns.forEach(btn => {
+        if (parseInt(btn.dataset.step) === state.step) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+    }
+
+    function updateLimitInputs() {
+      minLimitInput.value = state.minLimit !== null ? state.minLimit : '';
+      maxLimitInput.value = state.maxLimit !== null ? state.maxLimit : '';
+    }
+
+    function applyBounceAnimation() {
+      counterDisplay.classList.remove('bounce');
+      void counterDisplay.offsetWidth;
+      counterDisplay.classList.add('bounce');
+    }
+
+    function applyPulseAnimation(btn) {
+      btn.classList.remove('pulse');
+      void btn.offsetWidth;
+      btn.classList.add('pulse');
+    }
+
+    function applyResetAnimation() {
+      counterDisplay.classList.remove('reset-animation');
+      void counterDisplay.offsetWidth;
+      counterDisplay.classList.add('reset-animation');
+    }
+
+    function increment() {
+      const newValue = state.count + state.step;
+      if (state.maxLimit !== null && newValue > state.maxLimit) {
+        state.count = state.maxLimit;
+      } else {
+        state.count = newValue;
+      }
+      updateDisplay();
+      applyBounceAnimation();
+      applyPulseAnimation(incrementBtn);
+      saveState();
+    }
+
+    function decrement() {
+      const newValue = state.count - state.step;
+      if (state.minLimit !== null && newValue < state.minLimit) {
+        state.count = state.minLimit;
+      } else {
+        state.count = newValue;
+      }
+      updateDisplay();
+      applyBounceAnimation();
+      applyPulseAnimation(decrementBtn);
+      saveState();
+    }
+
+    function reset() {
+      state.count = 0;
+      updateDisplay();
+      applyResetAnimation();
+      saveState();
+    }
+
+    function setStep(step) {
+      state.step = step;
+      updateStepButtons();
+      saveState();
+    }
+
+    function setMinLimit(value) {
+      if (value === '' || value === null) {
+        state.minLimit = null;
+      } else {
+        const num = parseInt(value);
+        state.minLimit = isNaN(num) ? null : num;
+        if (state.maxLimit !== null && state.minLimit !== null && state.minLimit > state.maxLimit) {
+          state.minLimit = state.maxLimit;
+        }
+        if (state.count < state.minLimit) {
+          state.count = state.minLimit;
+          updateDisplay();
+        }
+      }
+      updateLimitInputs();
+      saveState();
+    }
+
+    function setMaxLimit(value) {
+      if (value === '' || value === null) {
+        state.maxLimit = null;
+      } else {
+        const num = parseInt(value);
+        state.maxLimit = isNaN(num) ? null : num;
+        if (state.minLimit !== null && state.maxLimit !== null && state.maxLimit < state.minLimit) {
+          state.maxLimit = state.minLimit;
+        }
+        if (state.count > state.maxLimit) {
+          state.count = state.maxLimit;
+          updateDisplay();
+        }
+      }
+      updateLimitInputs();
+      saveState();
+    }
+
+    incrementBtn.addEventListener('click', increment);
+    decrementBtn.addEventListener('click', decrement);
+
+    stepBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        setStep(parseInt(btn.dataset.step));
+      });
+    });
+
+    minLimitInput.addEventListener('input', (e) => {
+      setMinLimit(e.target.value);
+    });
+
+    minLimitInput.addEventListener('blur', () => {
+      updateLimitInputs();
+    });
+
+    maxLimitInput.addEventListener('input', (e) => {
+      setMaxLimit(e.target.value);
+    });
+
+    maxLimitInput.addEventListener('blur', () => {
+      updateLimitInputs();
+    });
+
+    counterDisplay.addEventListener('mousedown', (e) => {
+      isLongPress = false;
+      longPressTimer = setTimeout(() => {
+        isLongPress = true;
+        reset();
+      }, 500);
+    });
+
+    counterDisplay.addEventListener('mouseup', (e) => {
+      clearTimeout(longPressTimer);
+      if (isLongPress) {
+        e.preventDefault();
+      }
+    });
+
+    counterDisplay.addEventListener('mouseleave', () => {
+      clearTimeout(longPressTimer);
+    });
+
+    counterDisplay.addEventListener('touchstart', (e) => {
+      isLongPress = false;
+      longPressTimer = setTimeout(() => {
+        isLongPress = true;
+        reset();
+        e.preventDefault();
+      }, 500);
+    });
+
+    counterDisplay.addEventListener('touchend', (e) => {
+      clearTimeout(longPressTimer);
+    });
+
+    counterDisplay.addEventListener('touchmove', () => {
+      clearTimeout(longPressTimer);
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        increment();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        decrement();
+      } else if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        reset();
+      }
+    });
+
+    loadState();
+  </script>
+</body>
+</html>
