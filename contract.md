@@ -1,49 +1,43 @@
-APPROVED
-
----
-
-# Sprint Contract — Round 1
+# Sprint Contract — Round 2
 
 ### Scope
-
-This sprint focuses on building the Counter App from scratch. The implementation will deliver all Core Features and the most commonly-used Enhanced Features (step size, keyboard support, visual feedback, min/max limits). The count history feature with undo capability will be deferred to a future round.
+Fix the critical default step value bug ( Round 1 acceptance criterion #6 violation ) and elevate the Counter App with a distinctive visual identity. Transform the app from a generic template into a premium, personality-rich product.
 
 ### Deliverables
-
-- `index.html` — Single-file implementation with embedded CSS and JavaScript
-- All functionality working offline (no external dependencies except system fonts)
-- Responsive design working on mobile and desktop browsers
+- **index.html** — Updated single-file implementation with:
+  - **BUG FIX FIRST** — Default step value corrected to 1 (no localStorage state on fresh load)
+  - Custom SVG iconography (favicon, decorative accents)
+  - Redesigned counter display: premium typography (custom font, gradient fill or soft glow, subtle ambient pulse)
+  - Tactile button design: depth through gradients/shadows, visible 3D press effect on tap, hover lift effect
+  - Polished step selector: smooth sliding pill indicator (200-300ms transition), clear active state
+  - Meaningful microcopy: limit feedback ("You're at the limit"), first-load hint, branded tagline
 
 ### Acceptance Criteria
 
-1. **Initial Load** — Page loads showing counter at 0 with centered card layout (320px wide, white background, soft shadow).
+1. **Bug Fix Verification** — Fresh load (clear localStorage first): tap the + button once. Counter changes from 0 to exactly 1 (not 5). The "1" step button shows active state.
 
-2. **Increment** — Tapping the "+" button increases the count by the selected step value. Button shows 5% scale-down animation on press. Green color (#34C759).
+2. **Custom Visual Identity** — At least 2 custom SVG elements present (e.g., custom favicon, button icon, decorative accent). App looks distinctive, not like a generic template.
 
-3. **Decrement** — Tapping the "−" button decreases the count by the selected step value. Button shows 5% scale-down animation on press. Red color (#FF3B30).
+3. **Elevated Counter Display** — Number uses at least 2 of: custom font from Google Fonts, gradient text fill, soft glow/shadow, ambient pulse animation. Not plain bold system text.
 
-4. **Counter Display** — Current count displays at 72px bold font in the center. Number uses tabular-nums so width stays stable during changes.
+4. **Tactile Button Design** — +/- buttons have depth (gradient fills, shadows). On tap: button visibly depresses with transform (not just color change). On hover: subtle lift/scale effect.
 
-5. **Visual Feedback** — Counter value animates with a subtle bounce/scale effect on each change. Buttons show visual pulse animation on press.
+5. **Polished Step Selector** — Background pill slides smoothly (200-300ms) between options when tapping. Active option is visually distinct with clear hierarchy.
 
-6. **Step Size Selection** — Three-option segmented control above buttons allows selecting step of 1, 5, or 10. Default is 1.
+6. **Meaningful Microcopy** — At least one contextual message beyond "Long-press to reset". Examples: limit feedback when hitting min/max, helper text on first load, branded tagline. No placeholder text.
 
-7. **Reset Functionality** — Long-press (500ms) on the counter display resets count to 0. Reset animation plays.
+7. **All Round 1 Functionality Preserved** — Verified by:
+   - Increment/decrement works
+   - Long-press (500ms) on counter resets to 0
+   - Keyboard: Arrow Up/Down changes count, R resets
+   - Min/max limits clamp correctly
+   - localStorage persists state across refresh
+   - Bounce animation on counter, pulse on button press
 
-8. **Keyboard Support** — Arrow Up increases count by step value, Arrow Down decreases by step value, R key resets to 0.
-
-9. **Min/Max Limits** — Optional limits input fields below counter. When set, counter cannot exceed bounds. Default: no limits (empty fields).
-
-10. **Persistence** — Counter value and step size persist across page refresh via localStorage.
-
-11. **Mobile-Friendly** — All buttons have minimum 44px touch target size. Layout works on 320px-wide screens.
-
-12. **Color Compliance** — Increment button uses green (#34C759), decrement button uses red (#FF3B30), background is soft gray (#F5F5F7), card is white (#FFFFFF).
+8. **Responsive & Accessible** — Touch targets ≥44px, visible focus states, aria-labels on interactive elements.
 
 ### Out of Scope
-
-- Count history and undo functionality (deferred to Round 2)
-- Haptic/vibration feedback (mobile device limitation in pure web)
-- Custom fonts (using system font stack only)
-- Theming or color customization
-- Auto-save indicators or status messages
+- Count history/undo feature (from user story #6)
+- Backend or API changes
+- Multi-file refactoring (single HTML file)
+- Browser compatibility beyond modern browsers
