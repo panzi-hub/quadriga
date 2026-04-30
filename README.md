@@ -1,4 +1,4 @@
-# Harness Engineering
+# quadriga
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -159,7 +159,7 @@ HARNESS_MODEL=qwen2.5-coder:32b
 ## Project Structure
 
 ```
-Harness_Engineering/
+quadriga/
 ├── harness.py          # Entry point
 ├── agents.py           # Agent runtime
 ├── context.py          # Context management

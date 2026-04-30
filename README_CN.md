@@ -1,4 +1,4 @@
-# Harness Engineering
+# quadriga
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -161,7 +161,7 @@ HARNESS_MODEL=qwen2.5-coder:32b
 ## 项目结构
 
 ```
-Harness_Engineering/
+quadriga/
 ├── harness.py          # 入口
 ├── agents.py           # Agent 运行时
 ├── context.py          # 上下文管理
