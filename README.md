@@ -24,7 +24,7 @@ Before each build round, Builder and Evaluator negotiate a **sprint contract** w
 ### Workflow
 
 ```
-User: "Build a Pomodoro timer"
+User: "Build an interactive kanban board with drag-and-drop, column customization, and local storage persistence"
     → Planner generates spec.md
     → Contract negotiation (Builder + Evaluator)
     → Builder writes, tests, debugs code
@@ -83,7 +83,7 @@ HARNESS_MODEL=gpt-4o
 **Web application (default profile):**
 
 ```bash
-python harness.py "Build a Pomodoro timer with start, pause, and reset buttons"
+python harness.py "Build an interactive kanban board with drag-and-drop, column customization, and local storage persistence"
 ```
 
 **Terminal tasks:**
