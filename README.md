@@ -56,8 +56,8 @@ User: "Build an interactive kanban board with drag-and-drop, column customizatio
 ### Installation
 
 ```bash
-git clone https://github.com/panzi-hub/-Harness_Engineering.git
-cd Harness_Engineering
+git clone https://github.com/panzi-hub/quadriga.git
+cd quadriga
 pip install -r requirements.txt
 
 # Optional: browser automation for app-builder evaluator
