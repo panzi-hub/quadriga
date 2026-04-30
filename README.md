@@ -7,7 +7,7 @@ A multi-agent autonomous development framework based on Anthropic's [Harness des
 
 Harness automates the full development lifecycle — planning, contract negotiation, implementation, evaluation, and iterative refinement — using multiple specialized LLM agents without human intervention.
 
-[English](docs/README_EN.md)
+[中文](README_CN.md)
 
 ---
 
