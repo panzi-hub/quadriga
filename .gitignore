@@ -1,13 +1,42 @@
-# Logs
+# Logs and traces
 _trace_*.jsonl
+*.log
+logs/
 
 # Screenshots
 _screenshot.png
 
+# Environment files
 .env
+.env.temp
+.env.local
+
+# Python cache
 __pycache__/
-workspace/
 *.pyc
+*.pyo
+*.pyd
+.Python
+
+# Workspace (runtime output)
+workspace/
+
+# IDE
 .DS_Store
-jobs/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Virtual environments
 venv/
+.venv/
+env/
+
+# Jobs directory
+jobs/
+
+# Temporary files
+*.tmp
+*.temp
+vendor_wheels/
