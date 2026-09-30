@@ -25,11 +25,28 @@ except ImportError:
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _is_within(child: Path, root: Path) -> bool:
+    """True if `child` is `root` itself or lives underneath it.
+
+    Both sides are normalised first: realpath collapses ".." and symlinks,
+    normcase folds the case-only differences Windows treats as the same
+    location. commonpath then compares whole path components, so a sibling
+    like "/base/workspace2" is no longer mistaken for a child of
+    "/base/workspace".
+    """
+    child = os.path.normcase(os.path.realpath(child))
+    root = os.path.normcase(os.path.realpath(root))
+    try:
+        return os.path.commonpath([child, root]) == root
+    except ValueError:
+        # No common root (e.g. different drives on Windows) — not contained.
+        return False
+
+
 def _resolve(path: str) -> Path:
     """Resolve a relative path inside the workspace. Prevent escaping."""
     p = Path(config.WORKSPACE, path).resolve()
-    ws = Path(config.WORKSPACE).resolve()
-    if not str(p).startswith(str(ws)):
+    if not _is_within(p, Path(config.WORKSPACE)):
         raise ValueError(f"Path escapes workspace: {path}")
     return p
 
@@ -58,8 +75,8 @@ def read_skill_file(path: str) -> str:
     project_root = Path(__file__).parent
     p = (project_root / path).resolve()
     # Must stay within the skills directory
-    skills_dir = (project_root / "skills").resolve()
-    if not str(p).startswith(str(skills_dir)):
+    skills_dir = project_root / "skills"
+    if not _is_within(p, skills_dir):
         return f"[error] Path must be inside skills/ directory: {path}"
     if not p.exists():
         return f"[error] Skill file not found: {path}"
