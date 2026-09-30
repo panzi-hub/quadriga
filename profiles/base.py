@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import ClassVar, get_args, get_type_hints
 
 import config
 import tools
@@ -86,12 +86,9 @@ class ProfileConfig:
         env_key = self._env_key(profile_name, field_name)
         env_val = os.environ.get(env_key)
         if env_val is not None:
-            # Coerce to the type of default
-            if isinstance(default, float):
-                return float(env_val)
-            elif isinstance(default, int):
-                return int(env_val)
-            return env_val
+            return self._coerce_env_value(
+                env_key, env_val, self._env_target_type(field_name, default)
+            )
 
         # Global override, independent of the profile (e.g. TASK_BUDGET_SECONDS)
         override_key = self.GLOBAL_OVERRIDES.get(field_name)
@@ -106,6 +103,53 @@ class ProfileConfig:
             return config_val
 
         return default
+
+    def _env_target_type(self, field_name: str, default):
+        """Type an env override must be coerced to (None = keep the raw string).
+
+        The declared type of the ProfileConfig field wins — it is the contract
+        even when the value default is None (e.g. `max_rounds: int | None`).
+        Otherwise fall back to the type of the default the caller passed.
+        """
+        declared = _field_type(field_name)
+        if declared is not None:
+            return declared
+        if isinstance(default, bool):  # bool is an int subclass — check it first
+            return bool
+        if isinstance(default, (int, float)):
+            return type(default)
+        return None
+
+    @staticmethod
+    def _coerce_env_value(env_key: str, env_val: str, target):
+        """Coerce an env string, naming the variable when it is malformed."""
+        if target is bool:
+            return config.parse_bool(env_key, env_val)
+        if target is int:
+            return config.parse_int(env_key, env_val)
+        if target is float:
+            return config.parse_float(env_key, env_val)
+        return env_val
+
+
+_PROFILE_CONFIG_TYPES: dict[str, type] | None = None
+
+
+def _field_type(field_name: str) -> type | None:
+    """Declared numeric type of a ProfileConfig field, or None if there is none."""
+    global _PROFILE_CONFIG_TYPES
+    if _PROFILE_CONFIG_TYPES is None:
+        _PROFILE_CONFIG_TYPES = {}
+        try:
+            hints = get_type_hints(ProfileConfig)
+        except Exception:  # pragma: no cover — annotations are static
+            hints = {}
+        for name, hint in hints.items():
+            for candidate in (bool, int, float):
+                if hint is candidate or candidate in get_args(hint):
+                    _PROFILE_CONFIG_TYPES[name] = candidate
+                    break
+    return _PROFILE_CONFIG_TYPES.get(field_name)
 
 
 class BaseProfile(ABC):
