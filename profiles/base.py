@@ -22,7 +22,9 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import ClassVar, get_args, get_type_hints
 
+import config
 import tools
 
 
@@ -65,24 +67,35 @@ class ProfileConfig:
     time_warn_threshold: float | None = None          # fraction of budget for warning
     time_critical_threshold: float | None = None      # fraction of budget for critical
 
+    # Profile-independent overrides read from the environment: field name →
+    # env var (parsed as float). Set them in .env to tune every profile at once.
+    GLOBAL_OVERRIDES: ClassVar[dict[str, str]] = {
+        "task_budget": "TASK_BUDGET_SECONDS",
+    }
+
     def _env_key(self, profile_name: str, field_name: str) -> str:
         """Build environment variable name: PROFILE_TERMINAL_PASS_THRESHOLD."""
         return f"PROFILE_{profile_name.upper().replace('-', '_')}_{field_name.upper()}"
 
     def resolve(self, field_name: str, profile_name: str, default):
         """
-        Resolve a config value with priority: env var > explicit config > default.
+        Resolve a config value with priority:
+        PROFILE_* env var > global override env var > explicit config > default.
         """
         # Check environment variable
         env_key = self._env_key(profile_name, field_name)
         env_val = os.environ.get(env_key)
         if env_val is not None:
-            # Coerce to the type of default
-            if isinstance(default, float):
-                return float(env_val)
-            elif isinstance(default, int):
-                return int(env_val)
-            return env_val
+            return self._coerce_env_value(
+                env_key, env_val, self._env_target_type(field_name, default)
+            )
+
+        # Global override, independent of the profile (e.g. TASK_BUDGET_SECONDS)
+        override_key = self.GLOBAL_OVERRIDES.get(field_name)
+        if override_key:
+            override_val = os.environ.get(override_key)
+            if override_val:
+                return config.parse_float(override_key, override_val)
 
         # Check explicit config value
         config_val = getattr(self, field_name, None)
@@ -90,6 +103,53 @@ class ProfileConfig:
             return config_val
 
         return default
+
+    def _env_target_type(self, field_name: str, default):
+        """Type an env override must be coerced to (None = keep the raw string).
+
+        The declared type of the ProfileConfig field wins — it is the contract
+        even when the value default is None (e.g. `max_rounds: int | None`).
+        Otherwise fall back to the type of the default the caller passed.
+        """
+        declared = _field_type(field_name)
+        if declared is not None:
+            return declared
+        if isinstance(default, bool):  # bool is an int subclass — check it first
+            return bool
+        if isinstance(default, (int, float)):
+            return type(default)
+        return None
+
+    @staticmethod
+    def _coerce_env_value(env_key: str, env_val: str, target):
+        """Coerce an env string, naming the variable when it is malformed."""
+        if target is bool:
+            return config.parse_bool(env_key, env_val)
+        if target is int:
+            return config.parse_int(env_key, env_val)
+        if target is float:
+            return config.parse_float(env_key, env_val)
+        return env_val
+
+
+_PROFILE_CONFIG_TYPES: dict[str, type] | None = None
+
+
+def _field_type(field_name: str) -> type | None:
+    """Declared numeric type of a ProfileConfig field, or None if there is none."""
+    global _PROFILE_CONFIG_TYPES
+    if _PROFILE_CONFIG_TYPES is None:
+        _PROFILE_CONFIG_TYPES = {}
+        try:
+            hints = get_type_hints(ProfileConfig)
+        except Exception:  # pragma: no cover — annotations are static
+            hints = {}
+        for name, hint in hints.items():
+            for candidate in (bool, int, float):
+                if hint is candidate or candidate in get_args(hint):
+                    _PROFILE_CONFIG_TYPES[name] = candidate
+                    break
+    return _PROFILE_CONFIG_TYPES.get(field_name)
 
 
 class BaseProfile(ABC):

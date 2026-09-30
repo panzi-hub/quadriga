@@ -189,8 +189,18 @@ class Agent:
         client = get_client()
         consecutive_errors = 0
         last_text = ""
+        stopped_reason: str | None = None
 
         for iteration in range(1, config.MAX_AGENT_ITERATIONS + 1):
+            # --- Middleware: hard stop conditions ---
+            # Checked before anything else so a stopped agent never spends
+            # another LLM call (time budgets, etc.).
+            stopped_reason = self._stop_reason()
+            if stopped_reason:
+                log.warning(f"[{self.name}] Stopping early: {stopped_reason}")
+                trace.finish(stopped_reason, iteration)
+                break
+
             # --- Middleware: per-iteration hooks ---
             for mw in self.middlewares:
                 inject = mw.per_iteration(iteration, messages)
@@ -255,7 +265,10 @@ class Agent:
                 log.error(f"[{self.name}] API error: {e}")
                 consecutive_errors += 1
                 if consecutive_errors >= config.MAX_TOOL_ERRORS:
-                    log.error(f"[{self.name}] Too many API errors, aborting.")
+                    stopped_reason = (
+                        f"too many API errors (MAX_TOOL_ERRORS={config.MAX_TOOL_ERRORS})"
+                    )
+                    log.error(f"[{self.name}] {stopped_reason}, aborting.")
                     trace.finish("api_errors", iteration)
                     break
                 time.sleep(2 ** consecutive_errors)
@@ -269,7 +282,10 @@ class Agent:
                 trace.error("empty_choices", "API returned no choices")
                 consecutive_errors += 1
                 if consecutive_errors >= config.MAX_TOOL_ERRORS:
-                    log.error(f"[{self.name}] Too many empty responses, aborting.")
+                    stopped_reason = (
+                        f"too many empty responses (MAX_TOOL_ERRORS={config.MAX_TOOL_ERRORS})"
+                    )
+                    log.error(f"[{self.name}] {stopped_reason}, aborting.")
                     trace.finish("empty_choices", iteration)
                     break
                 time.sleep(2)
@@ -419,7 +435,23 @@ class Agent:
             log.warning(f"[{self.name}] Hit max iterations ({config.MAX_AGENT_ITERATIONS}).")
             trace.finish("max_iterations", config.MAX_AGENT_ITERATIONS)
 
+        if stopped_reason:
+            note = f"[harness] Agent '{self.name}' stopped early: {stopped_reason}"
+            last_text = f"{last_text}\n\n{note}" if last_text else note
+
         return last_text
+
+    def _stop_reason(self) -> str | None:
+        """Ask the middlewares whether the loop must end (None = keep iterating).
+
+        getattr keeps duck-typed middlewares that predate stop_reason() working.
+        """
+        for mw in self.middlewares:
+            check = getattr(mw, "stop_reason", None)
+            reason = check() if check else None
+            if reason:
+                return reason
+        return None
 
 
 def _truncate(s: str, n: int) -> str:

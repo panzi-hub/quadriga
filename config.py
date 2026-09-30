@@ -27,6 +27,51 @@ def _load_dotenv():
             os.environ[key] = value
 
 
+def parse_int(name: str, raw: str) -> int:
+    """Parse an int, naming the offending variable in the error message.
+
+    Shared with profiles/base.py so every typed env var fails the same way.
+    """
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"{name}={raw} is not a valid int") from None
+
+
+def parse_float(name: str, raw: str) -> float:
+    """Parse a float, naming the offending variable in the error message."""
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"{name}={raw} is not a valid float") from None
+
+
+def parse_bool(name: str, raw: str) -> bool:
+    """Parse a bool, naming the offending variable in the error message."""
+    value = raw.strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"{name}={raw} is not a valid bool")
+
+
+def _env_int(name: str, default: str) -> int:
+    return parse_int(name, os.environ.get(name, default))
+
+
+def _env_float(name: str, default: str) -> float:
+    return parse_float(name, os.environ.get(name, default))
+
+
+def _env_optional_float(name: str) -> float | None:
+    """None when unset or blank, so callers keep their own default."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    return parse_float(name, raw)
+
+
 _load_dotenv()
 
 # --- API ---
@@ -37,20 +82,30 @@ MODEL = os.environ.get("HARNESS_MODEL", "gpt-4o")
 # --- Token budgets ---
 # Lower thresholds for models with smaller effective context windows.
 # Aggressive compaction keeps the model focused and reduces latency.
-COMPRESS_THRESHOLD = int(os.environ.get("COMPRESS_THRESHOLD", "50000"))
-RESET_THRESHOLD = int(os.environ.get("RESET_THRESHOLD", "100000"))
+COMPRESS_THRESHOLD = _env_int("COMPRESS_THRESHOLD", "50000")
+RESET_THRESHOLD = _env_int("RESET_THRESHOLD", "100000")
 
 # --- Harness loop ---
-MAX_HARNESS_ROUNDS = int(os.environ.get("MAX_HARNESS_ROUNDS", "5"))
-PASS_THRESHOLD = float(os.environ.get("PASS_THRESHOLD", "7.0"))
+MAX_HARNESS_ROUNDS = _env_int("MAX_HARNESS_ROUNDS", "5")
+PASS_THRESHOLD = _env_float("PASS_THRESHOLD", "7.0")
 
 # --- Agent limits ---
 # NOTE: Do NOT use iteration count as the primary stop condition.
 # With ~8-9s per iteration, 80 iterations = ~700s, which silently
 # truncates 900s+ tasks. Use a high ceiling here; TimeBudgetMiddleware
 # handles the real time-based stop.
-MAX_AGENT_ITERATIONS = int(os.environ.get("MAX_AGENT_ITERATIONS", "5"))
-MAX_TOOL_ERRORS = 5           # consecutive tool errors before abort
+#
+# Keep this default in sync with MAX_AGENT_ITERATIONS in .env.example,
+# .env.template and the README configuration tables.
+MAX_AGENT_ITERATIONS = _env_int("MAX_AGENT_ITERATIONS", "500")
+# Consecutive API errors / empty responses before the agent loop aborts.
+# Documented as MAX_TOOL_ERRORS in .env.example (the name predates the retry logic).
+MAX_TOOL_ERRORS = _env_int("MAX_TOOL_ERRORS", "5")
+
+# --- Time budget ---
+# Global task time budget in seconds. When set, it overrides the budget a
+# profile resolved for itself; None = keep the profile's own default.
+TASK_BUDGET_SECONDS = _env_optional_float("TASK_BUDGET_SECONDS")
 
 # --- Parallel tool calls ---
 # Only enable for models that reliably produce valid parallel tool calls

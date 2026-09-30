@@ -132,7 +132,9 @@ For detailed architecture documentation, see [docs/ARCHITECTURE.md](docs/ARCHITE
 | `PASS_THRESHOLD` | `7.0` | Minimum score to pass (0–10) |
 | `COMPRESS_THRESHOLD` | `50000` | Token count to trigger context compression |
 | `RESET_THRESHOLD` | `100000` | Token count to trigger context reset |
-| `MAX_AGENT_ITERATIONS` | `5` | Max tool calls per agent (high ceiling; time budget middleware handles real stopping) |
+| `MAX_AGENT_ITERATIONS` | `500` | Max tool calls per agent (high ceiling; time budget middleware handles real stopping) |
+| `MAX_TOOL_ERRORS` | `5` | Consecutive API errors before the agent loop aborts |
+| `TASK_BUDGET_SECONDS` | — | Global task time budget in seconds (unset = the profile's own budget) |
 
 ---
 
