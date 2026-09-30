@@ -134,7 +134,7 @@ python harness.py --list-profiles
 | `PASS_THRESHOLD` | `7.0` | 通过最低分（0–10） |
 | `COMPRESS_THRESHOLD` | `50000` | 触发上下文压缩的 Token 阈值 |
 | `RESET_THRESHOLD` | `100000` | 触发上下文重置的 Token 阈值 |
-| `MAX_AGENT_ITERATIONS` | `5` | Agent 最大工具调用次数（高上限；实际停止由 TimeBudgetMiddleware 控制） |
+| `MAX_AGENT_ITERATIONS` | `500` | Agent 最大工具调用次数（高上限；实际停止由 TimeBudgetMiddleware 控制） |
 
 ---
 

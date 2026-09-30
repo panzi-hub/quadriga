@@ -49,7 +49,10 @@ PASS_THRESHOLD = float(os.environ.get("PASS_THRESHOLD", "7.0"))
 # With ~8-9s per iteration, 80 iterations = ~700s, which silently
 # truncates 900s+ tasks. Use a high ceiling here; TimeBudgetMiddleware
 # handles the real time-based stop.
-MAX_AGENT_ITERATIONS = int(os.environ.get("MAX_AGENT_ITERATIONS", "5"))
+#
+# Keep this default in sync with MAX_AGENT_ITERATIONS in .env.example,
+# .env.template and the README configuration tables.
+MAX_AGENT_ITERATIONS = int(os.environ.get("MAX_AGENT_ITERATIONS", "500"))
 MAX_TOOL_ERRORS = 5           # consecutive tool errors before abort
 
 # --- Parallel tool calls ---
