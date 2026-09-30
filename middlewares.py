@@ -42,6 +42,14 @@ class AgentMiddleware(ABC):
         """Called at the start of each iteration. Return a message to inject, or None."""
         return None
 
+    def stop_reason(self) -> str | None:
+        """Called at the start of each iteration. Return a reason to end the loop, or None.
+
+        Unlike the hooks above this is a hard stop: the agent gets no further
+        LLM turn. Use it for budgets that must be enforced, not just announced.
+        """
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Loop Detection
@@ -308,11 +316,12 @@ class PreExitVerificationMiddleware(AgentMiddleware):
 
 class TimeBudgetMiddleware(AgentMiddleware):
     """
-    Injects time awareness into the agent loop.
+    Injects time awareness into the agent loop and enforces the budget.
 
     At configurable thresholds (default: 60% and 85% of budget),
     warns the agent about remaining time and nudges it toward
-    wrapping up and verifying.
+    wrapping up and verifying. Once the budget is fully spent,
+    stop_reason() ends the loop — a task can no longer outlive its budget.
 
     Can track time from harness start (not just agent start) by calling
     sync_start_time() before the agent runs. This ensures the budget
@@ -333,24 +342,26 @@ class TimeBudgetMiddleware(AgentMiddleware):
         """Set start time to harness start, so budget includes planning/setup time."""
         self.start_time = harness_start
 
-    def per_iteration(self, iteration: int, messages: list[dict]) -> str | None:
-        elapsed = time.time() - self.start_time
-        fraction = elapsed / self.budget_seconds
-        remaining = self.budget_seconds - elapsed
+    def elapsed(self) -> float:
+        """Seconds spent since the (possibly synced) start time."""
+        return time.time() - self.start_time
 
-        if remaining <= 0:
-            if not self._critical:
-                self._critical = True
-                log.warning("Time budget EXPIRED")
-                return (
-                    "[SYSTEM] ⚠️ TIME IS UP. "
-                    "Submit your current work NOW. Do not start anything new."
-                )
-            return None
+    def stop_reason(self) -> str | None:
+        """End the agent loop once the budget is spent."""
+        if self.elapsed() >= self.budget_seconds:
+            log.warning(
+                f"Time budget exhausted ({self.budget_seconds:.0f}s) — stopping agent loop"
+            )
+            return "time_budget_exceeded"
+        return None
+
+    def per_iteration(self, iteration: int, messages: list[dict]) -> str | None:
+        elapsed = self.elapsed()
+        fraction = elapsed / self.budget_seconds
 
         if fraction >= self.critical_threshold and not self._critical:
             self._critical = True
-            mins_left = remaining / 60
+            mins_left = max(self.budget_seconds - elapsed, 0) / 60
             log.warning(f"Time budget critical: {mins_left:.1f} min remaining")
             return (
                 f"[SYSTEM] ⚠️ CRITICAL: Only {mins_left:.0f} min left. "
@@ -359,7 +370,7 @@ class TimeBudgetMiddleware(AgentMiddleware):
 
         if fraction >= self.warn_threshold and not self._warned:
             self._warned = True
-            mins_left = remaining / 60
+            mins_left = max(self.budget_seconds - elapsed, 0) / 60
             log.info(f"Time budget warning: {mins_left:.1f} min remaining")
             return (
                 f"[SYSTEM] {mins_left:.0f} min remaining. "

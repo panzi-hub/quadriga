@@ -22,7 +22,9 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import ClassVar
 
+import config
 import tools
 
 
@@ -65,13 +67,20 @@ class ProfileConfig:
     time_warn_threshold: float | None = None          # fraction of budget for warning
     time_critical_threshold: float | None = None      # fraction of budget for critical
 
+    # Profile-independent overrides read from the environment: field name →
+    # env var (parsed as float). Set them in .env to tune every profile at once.
+    GLOBAL_OVERRIDES: ClassVar[dict[str, str]] = {
+        "task_budget": "TASK_BUDGET_SECONDS",
+    }
+
     def _env_key(self, profile_name: str, field_name: str) -> str:
         """Build environment variable name: PROFILE_TERMINAL_PASS_THRESHOLD."""
         return f"PROFILE_{profile_name.upper().replace('-', '_')}_{field_name.upper()}"
 
     def resolve(self, field_name: str, profile_name: str, default):
         """
-        Resolve a config value with priority: env var > explicit config > default.
+        Resolve a config value with priority:
+        PROFILE_* env var > global override env var > explicit config > default.
         """
         # Check environment variable
         env_key = self._env_key(profile_name, field_name)
@@ -83,6 +92,13 @@ class ProfileConfig:
             elif isinstance(default, int):
                 return int(env_val)
             return env_val
+
+        # Global override, independent of the profile (e.g. TASK_BUDGET_SECONDS)
+        override_key = self.GLOBAL_OVERRIDES.get(field_name)
+        if override_key:
+            override_val = os.environ.get(override_key)
+            if override_val:
+                return config.parse_float(override_key, override_val)
 
         # Check explicit config value
         config_val = getattr(self, field_name, None)
