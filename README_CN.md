@@ -3,218 +3,241 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[English](README.md) | 中文
+纯 Python 的多 Agent 长任务框架。一次提示会经过规划、实现、测试和评分，而不是只发给模型一次。模型调用走 OpenAI 兼容接口，不依赖 LangChain、AutoGen 或 CrewAI。
+
+设计来自 Anthropic 的 [Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps)。
+
+[English](README.md)
 
 ---
 
-基于 Anthropic 文章 [Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps) 实现的多智能体自主开发框架。
-
-Harness 通过多个专用 LLM Agent 协同工作，自动化完成需求规划、合同协商、代码实现、质量评估与迭代优化的完整开发生命周期，无需人工干预。
-
----
-
-## 概述
-
-Harness 采用三 Agent 协作架构，将自然语言任务描述转换为可运行的应用程序：
-
-1. **Planner（规划师）** — 分析需求，生成详细的产品规格文档（`spec.md`）。
-2. **Builder（构建师）** — 根据规格实现代码，执行测试，并基于反馈迭代优化。
-3. **Evaluator（评估师）** — 从多维度评估产出，决定是优化（REFINE）、转向（PIVOT）还是通过（ACCEPT）。
-
-每轮构建前，Builder 与 Evaluator 会协商一份**冲刺合同（Sprint Contract）**，明确本轮验收标准，避免无目标的迭代。
-
-### 工作流程
+## 简单概览
 
 ```
-用户输入: "做一个支持拖拽排序、可自定义列的交互式看板应用"
-    → Planner 生成 spec.md
-    → 合同协商（Builder + Evaluator）
-    → Builder 编写、测试、调试代码
-    → Evaluator 评分（设计 / 原创性 / 工艺 / 功能性）
-    → 分数 < 阈值: 优化或转向
-    → 分数 >= 阈值: 完成
+任务
+  -> Planner        spec.md
+  -> Proposer       contract.md          仅 app-builder
+  -> Reviewer       APPROVED / 要求修改   最多 3 轮
+  -> Builder        代码 / 补丁 / answer.md
+  -> Evaluator      feedback.md
+       |  分数达到阈值
+       |    完成
+       |  分数下降
+       |    回滚后重新交给 Builder
+       |  其他情况
+       +--> 带着 feedback.md 再次交给 Builder
 ```
+
+Planner、合同协商和 Evaluator 都可能不存在。profile 跳过它们时，任务会直接交给 Builder。
+
+## 调用链
+
+`python harness.py` 会先加载一个 profile，再按该 profile 组装最多五个 Agent，然后跑固定的外层循环。每个 Agent 还有自己的内层工具循环。哪些角色存在、能用哪些工具，都由 profile 决定。
+
+| Profile | 用途 | Planner | 合同协商 | Evaluator | 默认通过线 |
+|---|---|---|---|---|---|
+| `app-builder` | 从一句话生成 Web 应用 | 开启 | 开启 | 开启，并附带浏览器工具 | 7.0 |
+| `terminal` | CLI / Terminal-Bench 风格任务 | 经常跳过 | 关闭 | 开启 | 8.0，最多 2 轮 |
+| `swe-bench` | 诊断并修复仓库中的问题 | 开启 | 关闭 | 开启 | 7.0 |
+| `reasoning` | 知识问答和计算题 | 开启 | 关闭 | 开启 | 7.0 |
+
+只有 `app-builder` 启用合同协商。其他 profile 继承 `BaseProfile` 中默认关闭的合同 Agent。
 
 ---
 
-## 特性
+## 调用链
 
-- **零第三方 Agent SDK 依赖** — 纯 Python 实现，不依赖 LangChain、AutoGen 或 CrewAI。
-- **兼容任意 OpenAI 格式 API** — 支持 OpenAI、Anthropic（通过 OpenRouter）、Ollama、Azure 等。
-- **上下文生命周期管理** — 自动压缩、焦虑检测与硬重置检查点，避免长任务超出上下文窗口。
-- **Profile 场景系统** — 针对网页应用、终端任务、GitHub Issue 修复、推理问答等场景的配置。
-- **技能库** — 37+ 领域技能，采用渐进式披露策略以最小化上下文占用。
-- **中间件系统** — 死循环检测、时间预算控制、退出前验证与错误恢复。
+```
+python harness.py [--profile NAME] "任务"
+        │
+        ▼
+main()                                          harness.py
+  ├─ 解析 --profile / --list-profiles / --verbose
+  ├─ get_profile(name)                          profiles/__init__.py
+  ├─ 创建 workspace/{timestamp}_{slug}/
+  ├─ git init
+  ├─ API 预检（benchmark 模式跳过）
+  └─ Harness(profile).run(task)
+        │
+        ▼
+Harness.__init__                                harness.py
+  ├─ SkillRegistry.build_catalog_prompt()       skills.py
+  ├─ profile.planner/builder/evaluator()
+  ├─ profile.contract_proposer/reviewer()
+  └─ Agent(name, prompt, tools, middlewares)    agents.py
+        │
+        ▼
+Harness.run(task)
+  ├─ profile.resolve_time_allocation(task)
+  │
+  ├─ 1. PLAN
+  │    planner.run("写入 spec.md")              planner 启用时
+  │    否则把原始提示直接写入 spec.md
+  │
+  └─ 2. for round in 1..max_rounds
+       ├─ CONTRACT                              仅 app-builder
+       │    proposer.run  -> contract.md
+       │    reviewer.run  -> APPROVED 或要求修改
+       │    最多重复 3 次
+       ├─ git tag round-N-start
+       ├─ BUILD
+       │    profile.format_build_task(...)
+       │    builder.run(task)                   读取 spec/feedback/contract
+       ├─ git tag round-N-end
+       └─ EVALUATE                              evaluator 启用时
+            evaluator.run("写入 feedback.md")
+            profile.extract_score(feedback.md)
+            score >= 阈值 -> 结束
+            score 下降    -> git reset --hard round-(N-1)-end
+```
+
+外层轮数先看 profile，profile 没有覆盖时用 `MAX_HARNESS_ROUNDS`（默认 5）。通过分默认是 `PASS_THRESHOLD=7.0`。profile 也可以在 `resolve_time_allocation()` 里直接关掉 planner 或 evaluator。
+
+### 每个 Agent 负责什么
+
+| Agent | 产物 | 结束条件 |
+|---|---|---|
+| Planner | `spec.md` | 不再调用工具 |
+| Contract proposer | `contract.md` | Reviewer 写入 `APPROVED`，或评审达到 3 次 |
+| Contract reviewer | 修订后的 `contract.md` | 同上 |
+| Builder | 应用文件、补丁，或 `answer.md` | 工具循环结束，或中间件硬停止 |
+| Evaluator | 带 `Average: X/10` 的 `feedback.md` | 工具循环结束 |
+
+`format_build_task()` 会把原始任务、上一轮 `feedback.md` 和分数历史送回下一轮 Builder。这是 refine。若新分数低于上一轮，`Harness.run` 会回滚到上一轮的 git tag。这是 pivot。
+
+### 一次 `Agent.run` 的内部调用
+
+所有角色共用这个循环。profile 只更换提示词、工具 schema、中间件和时间预算。
+
+```
+Agent.run(task)                                 agents.py
+  messages = [系统提示 + skill 目录, 用户任务]
+  trace = workspace/_trace_{role}.jsonl
+
+  for iteration in 1..MAX_AGENT_ITERATIONS:     默认 500
+    ├─ middleware.stop_reason()                 硬停止，不再请求模型
+    ├─ middleware.per_iteration()               可注入一条 user 消息
+    ├─ count_tokens(messages)                   context.py
+    │    超过 RESET_THRESHOLD 或出现焦虑信号 -> checkpoint 后重置
+    │    超过 COMPRESS_THRESHOLD              -> compact_messages()
+    ├─ chat.completions.create(                 OpenAI 兼容接口
+    │       model, messages, tools, tool_choice=auto)
+    ├─ 没有 tool_calls？
+    │    middleware.pre_exit() 可以强制再跑一轮
+    │    否则返回助手文本
+    └─ 每个 tool_call:
+         execute_tool(name, args)               tools.py
+           校验并修正参数 -> TOOL_DISPATCH -> 结果后处理
+         追加 tool result
+         middleware.post_tool()                 可注入纠偏提示
+```
+
+技能不是由 harness 预先选中的。系统提示里只有名称和简介。Agent 认为相关时，自己用 `read_skill_file` 读取 `skills/<name>/SKILL.md`。
+
+### 工具和中间件
+
+```
+模型 tool_call
+  -> tools.execute_tool
+       -> _validate_and_fix
+       -> read_file | write_file | edit_file | list_files
+          run_bash | delegate_task | read_skill_file
+          web_search | web_fetch
+          browser_test | stop_dev_server          仅 evaluator
+       -> 空结果标记 / 大输出落盘
+  -> AgentMiddleware.post_tool / pre_exit / stop_reason
+       LoopDetection | TimeBudget | PreExitVerification
+       TaskTracking | SkeletonDetection | ErrorGuidance
+```
+
+文件工具限制在工作区内。`delegate_task` 会发起一次嵌套模型调用，避免长时间探索撑满父上下文。浏览器工具只由 `AppBuilderProfile.evaluator()` 挂上。
+
+### 循环留下的文件
+
+```
+workspace/{timestamp}_{slug}/
+├── spec.md                  planner 产物，或原始提示
+├── contract.md              app-builder 的本轮验收合同
+├── feedback.md              evaluator 的分数和意见
+├── progress.md              Agent 可选的进度记录
+├── _trace_{role}.jsonl      每个角色一份 trace
+└── .git                     round-N-start / round-N-end 标签
+```
+
+`HARNESS_FLAT_WORKSPACE=1` 时不创建时间戳目录，也不做 API 预检。benchmark 运行器使用这个模式。
 
 ---
 
 ## 快速开始
 
-### 环境要求
-
-- Python 3.10+
-- 任意 OpenAI 兼容 API Key
-
-### 安装
-
 ```bash
 git clone https://github.com/panzi-hub/quadriga.git
 cd quadriga
 pip install -r requirements.txt
+python -m playwright install chromium   # 只有 app-builder 的浏览器评估需要
 
-# 可选：安装浏览器自动化依赖（用于 app-builder 评估）
-python -m playwright install chromium
-```
-
-### 配置
-
-```bash
 cp .env.template .env
 ```
 
-编辑 `.env`：
-
 ```bash
-OPENAI_API_KEY=sk-your-key-here
+OPENAI_API_KEY=sk-your-key
 OPENAI_BASE_URL=https://api.openai.com/v1
 HARNESS_MODEL=gpt-4o
 ```
 
-### 使用
-
-**网页应用（默认 Profile）：**
-
 ```bash
-python harness.py "Build an interactive kanban board with drag-and-drop, column customization, and local storage persistence"
-```
-
-**终端任务：**
-
-```bash
-python harness.py --profile terminal "Find and fix broken symlinks in /tmp"
-```
-
-**查看所有 Profile：**
-
-```bash
+python harness.py "做一个支持拖拽和本地存储的交互式看板"
+python harness.py --profile terminal "找出并修复 /tmp 中的失效符号链接"
+python harness.py --profile swe-bench "修复 parse_config() 中的 TypeError"
+python harness.py --profile reasoning "火星的逃逸速度是多少？"
 python harness.py --list-profiles
 ```
 
-任务输出保存在 `workspace/{时间戳}_{任务}/` 目录下，包含规格文档、合同、生成的代码和评估反馈。
+---
+
+## 配置
+
+| 变量 | 默认值 | 作用位置 |
+|---|---|---|
+| `OPENAI_API_KEY` | — | `agents.get_client()` |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API 客户端 |
+| `HARNESS_MODEL` | `gpt-4o` | 每一次模型调用 |
+| `HARNESS_WORKSPACE` | `./workspace` | 项目输出目录 |
+| `MAX_HARNESS_ROUNDS` | `5` | profile 未覆盖时的外层轮数 |
+| `PASS_THRESHOLD` | `7.0` | 兜底通过分 |
+| `COMPRESS_THRESHOLD` | `50000` | 内层循环压缩阈值 |
+| `RESET_THRESHOLD` | `100000` | 内层循环 checkpoint 重置阈值 |
+| `MAX_AGENT_ITERATIONS` | `500` | 内层循环上限 |
+| `MAX_TOOL_ERRORS` | `5` | 连续 API 错误后中止 |
+| `TASK_BUDGET_SECONDS` | 未设置 | 全局覆盖所有 profile 的时间预算 |
+| `ENABLE_PARALLEL_TOOL_CALLS` | `0` | 默认关闭，除非模型能稳定处理并行工具调用 |
+
+profile 参数也可以不改代码直接覆盖，例如 `PROFILE_TERMINAL_PASS_THRESHOLD=9` 或 `PROFILE_TERMINAL_TASK_BUDGET=1800`。
+
+OpenRouter 和本地 OpenAI 兼容服务只需要改 `OPENAI_BASE_URL` 与 `HARNESS_MODEL`。
 
 ---
 
-## 架构
+## 仓库地图
 
-| 组件 | 职责 |
-|-----------|----------------|
-| `harness.py` | 主编排器：执行 Plan → Contract → Build → Evaluate 循环 |
-| `agents.py` | Agent 运行时循环、工具执行、轨迹记录 |
-| `context.py` | 上下文生命周期：压缩、焦虑检测、检查点重置 |
-| `tools.py` | 工具实现：文件 I/O、Shell、浏览器、Git、技能 |
-| `middlewares.py` | 中间件栈：死循环检测、时间预算、任务追踪 |
-| `prompts.py` | 所有 Agent 角色的系统提示词 |
-| `skills.py` | 支持渐进式披露的技能注册表 |
-| `profiles/` | 场景配置（app-builder、terminal、swe-bench、reasoning） |
-| `skills/` | 领域技能库（37+ 技能） |
+| 路径 | 在调用链中的位置 |
+|---|---|
+| `harness.py` | CLI、外层循环、合同循环、git tag、分数决策 |
+| `agents.py` | 内层模型/工具循环和 JSONL trace |
+| `profiles/` | 一个场景使用哪些 Agent、工具、提示词、预算和评分 |
+| `prompts.py` | app-builder 路径的角色提示词 |
+| `tools.py` | 工具 schema 和 `execute_tool` 分发 |
+| `middlewares.py` | 停止条件与纠偏注入 |
+| `context.py` | token 计数、压缩、焦虑检测、checkpoint |
+| `skills.py`, `skills/` | 技能目录和 36 个按需加载的领域技能 |
+| `config.py` | 环境变量和循环阈值 |
+| `benchmarks/` | Terminal-Bench 任务元数据和运行胶水 |
+| `tests/` | 配置契约、沙箱路径和 API 检查 |
 
-详细架构文档见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-
----
-
-## 配置参考
-
-| 变量 | 默认值 | 说明 |
-|----------|---------|-------------|
-| `OPENAI_API_KEY` | — | LLM 提供商的 API Key |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API 端点地址 |
-| `HARNESS_MODEL` | `gpt-4o` | 模型标识符 |
-| `HARNESS_WORKSPACE` | `./workspace` | 输出目录 |
-| `MAX_HARNESS_ROUNDS` | `5` | 最大构建-评估迭代次数 |
-| `PASS_THRESHOLD` | `7.0` | 通过最低分（0–10） |
-| `COMPRESS_THRESHOLD` | `50000` | 触发上下文压缩的 Token 阈值 |
-| `RESET_THRESHOLD` | `100000` | 触发上下文重置的 Token 阈值 |
-| `MAX_AGENT_ITERATIONS` | `500` | Agent 最大工具调用次数（高上限；实际停止由 TimeBudgetMiddleware 控制） |
-| `MAX_TOOL_ERRORS` | `5` | 连续 API 错误达到此数量后中止 Agent 循环 |
-| `TASK_BUDGET_SECONDS` | — | 全局任务时间预算（秒，未设置则沿用 Profile 自己的预算） |
-
----
-
-## 提供商配置示例
-
-**OpenRouter（Claude、Gemini 等）：**
-
-```bash
-OPENAI_BASE_URL=https://openrouter.ai/api/v1
-HARNESS_MODEL=anthropic/claude-sonnet-4
-OPENAI_API_KEY=sk-or-your-key
-```
-
-**Ollama（本地部署）：**
-
-```bash
-OPENAI_BASE_URL=http://localhost:11434/v1
-HARNESS_MODEL=qwen2.5-coder:32b
-# 无需 API Key
-```
-
----
-
-## 项目结构
-
-```
-quadriga/
-├── harness.py          # 入口
-├── agents.py           # Agent 运行时
-├── context.py          # 上下文管理
-├── tools.py            # 工具实现
-├── middlewares.py      # 中间件栈
-├── prompts.py          # 系统提示词
-├── skills.py           # 技能注册表
-├── config.py           # 配置加载器
-├── profiles/           # 场景配置
-│   ├── app_builder.py
-│   ├── terminal.py
-│   ├── swe_bench.py
-│   └── reasoning.py
-├── skills/             # 领域技能库
-├── docs/               # 架构与使用文档
-├── tests/              # 测试脚本
-├── benchmarks/         # 基准测试数据
-└── workspace/          # 运行时输出（gitignored）
-```
-
----
-
-## 文档
-
-- [快速架构概览](docs/ARCHITECTURE_QUICK.md) — 5 分钟了解核心架构
-- [详细架构文档](docs/ARCHITECTURE.md) — 完整系统设计
-- [架构可视化图表](docs/ARCHITECTURE_DIAGRAMS.md) — 可视化图表
-- [项目结构说明](docs/PROJECT_STRUCTURE.md) — 目录布局
-- [Profiles 使用指南](docs/PROFILES.md) — 使用与创建 Profile
-- [快速参考手册](docs/QUICK_REFERENCE.md) — 命令速查
-
----
-
-## 贡献
-
-欢迎提交 Issue 或 Pull Request，包括错误修复、新功能、技能或文档改进。
-
-贡献时请遵循：
-- PEP 8 代码风格规范
-- 为新功能添加测试
-- 更新相关文档
+更多细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)、[docs/PROFILES.md](docs/PROFILES.md)、[docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)。
 
 ---
 
 ## 许可证
 
-MIT License — 详见 [LICENSE](LICENSE)。
-
----
-
-## 致谢
-
-- [Anthropic](https://www.anthropic.com/) — 原始 Harness 设计理念
-- [OpenAI](https://openai.com/) — LLM API
+MIT。见 [LICENSE](LICENSE)。

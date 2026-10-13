@@ -3,216 +3,241 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A multi-agent autonomous development framework based on Anthropic's [Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps).
+A pure-Python multi-agent harness for long-running tasks. It turns one prompt into a planned, built, tested, and scored result through an OpenAI-compatible API. No LangChain, AutoGen, or CrewAI.
 
-Harness automates the full development lifecycle — planning, contract negotiation, implementation, evaluation, and iterative refinement — using multiple specialized LLM agents without human intervention.
+The design follows Anthropic's [Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps).
 
 [中文](README_CN.md)
 
 ---
 
-## Overview
-
-Harness implements a three-agent collaborative system that transforms a natural language task description into a working application:
-
-1. **Planner** — Analyzes requirements and generates a detailed product specification (`spec.md`).
-2. **Builder** — Implements the specification, writes code, runs tests, and iterates based on feedback.
-3. **Evaluator** — Assesses the output across multiple dimensions and decides whether to refine, pivot, or accept.
-
-Before each build round, Builder and Evaluator negotiate a **sprint contract** with explicit acceptance criteria, preventing unfocused iterations.
-
-### Workflow
+## Simple overview
 
 ```
-User: "Build an interactive kanban board with drag-and-drop, column customization, and local storage persistence"
-    → Planner generates spec.md
-    → Contract negotiation (Builder + Evaluator)
-    → Builder writes, tests, debugs code
-    → Evaluator scores (Design / Originality / Craft / Functionality)
-    → If score < threshold: refine or pivot
-    → If score >= threshold: done
+task
+  -> Planner        spec.md
+  -> Proposer       contract.md          app-builder only
+  -> Reviewer       APPROVED / revise    up to 3 passes
+  -> Builder        code / patch / answer.md
+  -> Evaluator      feedback.md
+       |  score >= threshold
+       |    done
+       |  score dropped
+       |    roll back, then Builder again
+       |  otherwise
+       +--> Builder again, with feedback.md
 ```
+
+Planner, contract, and Evaluator can be absent. A profile that skips them goes straight to Builder.
+
+## Call chain
+
+`python harness.py` does not send the task to one model and stop. It builds a profile, constructs up to five agents, then drives them through a fixed outer loop. Each agent has its own inner tool loop. Profiles decide which agents exist and which tools they get.
+
+| Profile | What it is for | Planner | Contract | Evaluator | Default pass |
+|---|---|---|---|---|---|
+| `app-builder` | Web apps from a prompt | on | on | on, plus browser tools | 7.0 |
+| `terminal` | CLI / Terminal-Bench-style tasks | often skipped | off | on | 8.0, max 2 rounds |
+| `swe-bench` | Diagnose and patch a repository issue | on | off | on | 7.0 |
+| `reasoning` | Knowledge and calculation tasks | on | off | on | 7.0 |
+
+Only `app-builder` enables contract negotiation. The other profiles inherit the disabled contract agents from `BaseProfile`.
 
 ---
 
-## Features
+## Call chain
 
-- **Zero third-party agent SDK dependencies** — Pure Python, no LangChain, AutoGen, or CrewAI.
-- **OpenAI-compatible API support** — Works with OpenAI, Anthropic (via OpenRouter), Ollama, Azure, and any compatible endpoint.
-- **Context lifecycle management** — Automatic compression, anxiety detection, and hard resets with checkpointing to handle long-running tasks without context window exhaustion.
-- **Profile system** — Task-specific configurations for web apps, terminal tasks, GitHub issue fixing, and reasoning.
-- **Skill library** — 37+ domain-specific skills with progressive disclosure to minimize context usage.
-- **Middleware system** — Loop detection, time budget enforcement, pre-exit verification, and error recovery.
+```
+python harness.py [--profile NAME] "task"
+        │
+        ▼
+main()                                          harness.py
+  ├─ parse --profile / --list-profiles / --verbose
+  ├─ get_profile(name)                          profiles/__init__.py
+  ├─ create workspace/{timestamp}_{slug}/
+  ├─ git init
+  ├─ API preflight (skipped in benchmark mode)
+  └─ Harness(profile).run(task)
+        │
+        ▼
+Harness.__init__                                harness.py
+  ├─ SkillRegistry.build_catalog_prompt()       skills.py
+  ├─ profile.planner/builder/evaluator()
+  ├─ profile.contract_proposer/reviewer()
+  └─ Agent(name, prompt, tools, middlewares)    agents.py
+        │
+        ▼
+Harness.run(task)
+  ├─ profile.resolve_time_allocation(task)
+  │
+  ├─ 1. PLAN
+  │    planner.run("write spec.md")             if planner enabled
+  │    else write the raw prompt to spec.md
+  │
+  └─ 2. for round in 1..max_rounds
+       ├─ CONTRACT                              app-builder only
+       │    proposer.run  -> contract.md
+       │    reviewer.run  -> APPROVED or revise
+       │    repeat up to 3 times
+       ├─ git tag round-N-start
+       ├─ BUILD
+       │    profile.format_build_task(...)
+       │    builder.run(task)                   reads spec/feedback/contract
+       ├─ git tag round-N-end
+       └─ EVALUATE                              if evaluator enabled
+            evaluator.run("write feedback.md")
+            profile.extract_score(feedback.md)
+            score >= threshold -> stop
+            score dropped      -> git reset --hard round-(N-1)-end
+```
+
+Outer-loop limits come from the profile, then from `MAX_HARNESS_ROUNDS` (default 5) and `PASS_THRESHOLD` (default 7.0). A profile can also disable the planner or evaluator through `resolve_time_allocation()`.
+
+### What each agent is told to do
+
+| Agent | Writes | Stops when |
+|---|---|---|
+| Planner | `spec.md` | It stops calling tools |
+| Contract proposer | `contract.md` | Reviewer writes `APPROVED`, or 3 review passes end |
+| Contract reviewer | revised `contract.md` | Same contract loop |
+| Builder | application files, patches, or `answer.md` | Its tool loop ends, or a middleware hard-stops it |
+| Evaluator | `feedback.md` with `Average: X/10` | Its tool loop ends |
+
+`format_build_task()` feeds the original prompt, the previous `feedback.md`, and the score history back into the next Builder round. That is the refine path. The pivot path is the git rollback in `Harness.run` when the new score is lower than the previous one.
+
+### Inside one `Agent.run`
+
+This loop is the same for every role. The profile only changes the prompt, tool schema, middleware, and time budget.
+
+```
+Agent.run(task)                                 agents.py
+  messages = [system prompt + skill catalog, user task]
+  trace = workspace/_trace_{role}.jsonl
+
+  for iteration in 1..MAX_AGENT_ITERATIONS:     default 500
+    ├─ middleware.stop_reason()                 hard stop, no further model call
+    ├─ middleware.per_iteration()               optional injected user message
+    ├─ count_tokens(messages)                   context.py
+    │    > RESET_THRESHOLD or anxiety -> checkpoint, then restore
+    │    > COMPRESS_THRESHOLD         -> compact_messages()
+    ├─ chat.completions.create(                 OpenAI-compatible API
+    │       model, messages, tools, tool_choice=auto)
+    ├─ no tool_calls?
+    │    middleware.pre_exit() may force another turn
+    │    otherwise return the assistant text
+    └─ for each tool_call:
+         execute_tool(name, args)               tools.py
+           validate/fix args -> TOOL_DISPATCH -> post-process
+         append tool result
+         middleware.post_tool()                 optional injected nudge
+```
+
+A skill is not selected by the harness. The catalog is only names and descriptions in the system prompt. The agent loads `skills/<name>/SKILL.md` itself with `read_skill_file` when it decides the skill is relevant.
+
+### Tool and middleware chain
+
+```
+model tool_call
+  -> tools.execute_tool
+       -> _validate_and_fix
+       -> read_file | write_file | edit_file | list_files
+          run_bash | delegate_task | read_skill_file
+          web_search | web_fetch
+          browser_test | stop_dev_server          evaluator only
+       -> empty-result marker / large-output spill
+  -> AgentMiddleware.post_tool / pre_exit / stop_reason
+       LoopDetection | TimeBudget | PreExitVerification
+       TaskTracking | SkeletonDetection | ErrorGuidance
+```
+
+File tools are sandboxed to the workspace. `delegate_task` runs a nested model call so a long exploration does not have to stay in the parent context. Browser tools are attached only by `AppBuilderProfile.evaluator()`.
+
+### Files the loop leaves behind
+
+```
+workspace/{timestamp}_{slug}/
+├── spec.md                  planner output, or the raw prompt
+├── contract.md              app-builder sprint contract
+├── feedback.md              evaluator score and critique
+├── progress.md              optional agent progress notes
+├── _trace_{role}.jsonl      one trace per agent role
+└── .git                     round-N-start / round-N-end tags
+```
+
+`HARNESS_FLAT_WORKSPACE=1` skips the timestamped directory and the API preflight. Benchmark runners use that mode.
 
 ---
 
-## Quick Start
-
-### Prerequisites
-
-- Python 3.10+
-- An OpenAI-compatible API key
-
-### Installation
+## Quick start
 
 ```bash
 git clone https://github.com/panzi-hub/quadriga.git
 cd quadriga
 pip install -r requirements.txt
+python -m playwright install chromium   # only for app-builder browser evaluation
 
-# Optional: browser automation for app-builder evaluator
-python -m playwright install chromium
-```
-
-### Configuration
-
-```bash
 cp .env.template .env
 ```
 
-Edit `.env`:
-
 ```bash
-OPENAI_API_KEY=sk-your-key-here
+OPENAI_API_KEY=sk-your-key
 OPENAI_BASE_URL=https://api.openai.com/v1
 HARNESS_MODEL=gpt-4o
 ```
 
-### Usage
-
-**Web application (default profile):**
-
 ```bash
-python harness.py "Build an interactive kanban board with drag-and-drop, column customization, and local storage persistence"
-```
-
-**Terminal tasks:**
-
-```bash
+python harness.py "Build an interactive kanban board with drag-and-drop and local storage"
 python harness.py --profile terminal "Find and fix broken symlinks in /tmp"
-```
-
-**List all profiles:**
-
-```bash
+python harness.py --profile swe-bench "Fix the TypeError in parse_config()"
+python harness.py --profile reasoning "What is the escape velocity of Mars?"
 python harness.py --list-profiles
 ```
 
-Output is written to `workspace/{timestamp}_{task}/`, including the specification, contract, generated code, and evaluation feedback.
+---
+
+## Configuration
+
+| Variable | Default | Used by |
+|---|---|---|
+| `OPENAI_API_KEY` | — | `agents.get_client()` |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API client |
+| `HARNESS_MODEL` | `gpt-4o` | every model call |
+| `HARNESS_WORKSPACE` | `./workspace` | project output |
+| `MAX_HARNESS_ROUNDS` | `5` | outer loop, if the profile does not override it |
+| `PASS_THRESHOLD` | `7.0` | fallback pass score |
+| `COMPRESS_THRESHOLD` | `50000` | inner-loop compaction |
+| `RESET_THRESHOLD` | `100000` | inner-loop checkpoint reset |
+| `MAX_AGENT_ITERATIONS` | `500` | inner loop ceiling |
+| `MAX_TOOL_ERRORS` | `5` | consecutive API errors before abort |
+| `TASK_BUDGET_SECONDS` | unset | global override of every profile time budget |
+| `ENABLE_PARALLEL_TOOL_CALLS` | `0` | off unless the model handles parallel calls reliably |
+
+Profile values can also be overridden without editing code, for example `PROFILE_TERMINAL_PASS_THRESHOLD=9` or `PROFILE_TERMINAL_TASK_BUDGET=1800`.
+
+OpenRouter and local OpenAI-compatible servers work by changing `OPENAI_BASE_URL` and `HARNESS_MODEL`.
 
 ---
 
-## Architecture
+## Repository map
 
-| Component | Responsibility |
-|-----------|----------------|
-| `harness.py` | Main orchestrator: runs the Plan → Contract → Build → Evaluate loop |
-| `agents.py` | Agent runtime loop, tool execution, trace recording |
-| `context.py` | Context lifecycle: compression, anxiety detection, checkpoint reset |
-| `tools.py` | Tool implementations: file I/O, shell, browser, git, skills |
-| `middlewares.py` | Middleware stack: loop detection, time budgets, task tracking |
-| `prompts.py` | System prompts for all agent roles |
-| `skills.py` | Skill registry with progressive disclosure |
-| `profiles/` | Scenario-specific configurations (app-builder, terminal, swe-bench, reasoning) |
-| `skills/` | Domain skill library (37+ skills) |
+| Path | Role in the call chain |
+|---|---|
+| `harness.py` | CLI, outer loop, contract loop, git tags, score decision |
+| `agents.py` | Inner model/tool loop and JSONL traces |
+| `profiles/` | Which agents, tools, prompts, budgets, and scores a scenario uses |
+| `prompts.py` | Role prompts for the app-builder path |
+| `tools.py` | Tool schemas and `execute_tool` dispatch |
+| `middlewares.py` | Stop conditions and injected course corrections |
+| `context.py` | Token counting, compaction, anxiety detection, checkpoints |
+| `skills.py`, `skills/` | Catalog plus 36 on-demand domain skills |
+| `config.py` | Environment loading and loop thresholds |
+| `benchmarks/` | Terminal-Bench task metadata and runner glue |
+| `tests/` | Config contract, sandbox path, and API checks |
 
-For detailed architecture documentation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
----
-
-## Configuration Reference
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENAI_API_KEY` | — | API key for the LLM provider |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API endpoint URL |
-| `HARNESS_MODEL` | `gpt-4o` | Model identifier |
-| `HARNESS_WORKSPACE` | `./workspace` | Output directory |
-| `MAX_HARNESS_ROUNDS` | `5` | Max build-evaluate iterations |
-| `PASS_THRESHOLD` | `7.0` | Minimum score to pass (0–10) |
-| `COMPRESS_THRESHOLD` | `50000` | Token count to trigger context compression |
-| `RESET_THRESHOLD` | `100000` | Token count to trigger context reset |
-| `MAX_AGENT_ITERATIONS` | `500` | Max tool calls per agent (high ceiling; time budget middleware handles real stopping) |
-| `MAX_TOOL_ERRORS` | `5` | Consecutive API errors before the agent loop aborts |
-| `TASK_BUDGET_SECONDS` | — | Global task time budget in seconds (unset = the profile's own budget) |
-
----
-
-## Provider Examples
-
-**OpenRouter (Claude, Gemini, etc.):**
-
-```bash
-OPENAI_BASE_URL=https://openrouter.ai/api/v1
-HARNESS_MODEL=anthropic/claude-sonnet-4
-OPENAI_API_KEY=sk-or-your-key
-```
-
-**Ollama (local):**
-
-```bash
-OPENAI_BASE_URL=http://localhost:11434/v1
-HARNESS_MODEL=qwen2.5-coder:32b
-# No API key required
-```
-
----
-
-## Project Structure
-
-```
-quadriga/
-├── harness.py          # Entry point
-├── agents.py           # Agent runtime
-├── context.py          # Context management
-├── tools.py            # Tool implementations
-├── middlewares.py      # Middleware stack
-├── prompts.py          # System prompts
-├── skills.py           # Skill registry
-├── config.py           # Configuration loader
-├── profiles/           # Scenario profiles
-│   ├── app_builder.py
-│   ├── terminal.py
-│   ├── swe_bench.py
-│   └── reasoning.py
-├── skills/             # Domain skill library
-├── docs/               # Architecture and usage docs
-├── tests/              # Test scripts
-├── benchmarks/         # Benchmark data
-└── workspace/          # Runtime output (gitignored)
-```
-
----
-
-## Documentation
-
-- [Architecture Overview](docs/ARCHITECTURE_QUICK.md) — 5-minute introduction
-- [Detailed Architecture](docs/ARCHITECTURE.md) — Full system design
-- [Architecture Diagrams](docs/ARCHITECTURE_DIAGRAMS.md) — Visual diagrams
-- [Project Structure](docs/PROJECT_STRUCTURE.md) — Directory layout
-- [Profiles Guide](docs/PROFILES.md) — Using and creating profiles
-- [Quick Reference](docs/QUICK_REFERENCE.md) — Command reference
-
----
-
-## Contributing
-
-Contributions are welcome. Please open an issue or pull request for bug fixes, new features, skills, or documentation improvements.
-
-When contributing:
-- Follow PEP 8 style guidelines.
-- Add tests for new functionality.
-- Update relevant documentation.
+More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/PROFILES.md](docs/PROFILES.md), [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md).
 
 ---
 
 ## License
 
-MIT License — see [LICENSE](LICENSE).
-
----
-
-## Acknowledgments
-
-- [Anthropic](https://www.anthropic.com/) — Original Harness design concept
-- [OpenAI](https://openai.com/) — LLM API
+MIT. See [LICENSE](LICENSE).
